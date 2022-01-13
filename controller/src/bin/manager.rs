@@ -24,6 +24,8 @@ use std::process::Command;
 use ds2::dataflow::{Epoch, OperatorId, OperatorInstances, parse::*};
 use ds2::policy::scaling::*;
 
+use std::fs;
+
 /// Formats a dataflow configuration for Flink scripts
 fn format_flink_configuration(conf: &Vec<(OperatorId,OperatorInstances)>) -> String
 {
@@ -176,6 +178,7 @@ pub fn main() -> notify::Result<()>
             let mut num_instances: OperatorInstances = conf.iter().map(|(_,c)| c).sum();
             eprintln!("Loaded initial physical topology with {} operator instances.", num_instances);
             let script_argument = format_flink_configuration(&conf);
+            eprintln!("args: {}", script_argument);
             // Step 1: Start Flink job
             let cmd_out = Command::new(start_script_path.as_os_str())
                                         .arg(script_argument)
@@ -203,11 +206,15 @@ pub fn main() -> notify::Result<()>
                 {
                     Ok(DebouncedEvent::Create(p)) =>
                     {
+                        eprintln!("++++++Handle Events: {}", num_instances);
                         if let Some(ext) = p.extension()
                         {
                             if ext == os_str_ext
                             { // A log file was created or updated
-                                if !p.as_path().exists() { continue; }  // Ignore files created during policy evaluation
+                                if !p.as_path().exists() { 
+                                    eprintln!("++++++does not exists path");
+                                    continue; 
+                                }  // Ignore files created during policy evaluation
                                 let filepath = p.file_stem().expect("Error extracting rates file name.").to_str().expect("Error converting rates filepath.");
                                 let idx = filepath.rfind('-').expect("Error extracting epoch number from rates file.");
                                 let epoch = &filepath[idx+1..];
@@ -290,24 +297,31 @@ pub fn main() -> notify::Result<()>
                                         // Update topology metadata with the new configuration
                                         topo.set_configuration(&new_conf);
                                         conf = new_conf;
+                                        num_instances = conf.iter().map(|(_,c)| c).sum(); // update number of instances
                                         epochs_since_reconfiguration = 0;
                                         evaluations = 0;
                                         // Remove old rates files
                                         // TODO: remove only files in the repo
-                                        let _ = Command::new("rm")
-                                                    .arg("-r")
-                                                    .arg(metrics_repo_path.to_str().unwrap())
-                                                    .output()
-                                                    .expect("Failed to remove log files.");
-                                        // Create a new rates folder
-                                        let _ = Command::new("mkdir")
-                                                    .arg(metrics_repo_path.to_str().unwrap())
-                                                    .output()
-                                                    .expect("Failed to create new rates folder.");
+                                        // let _ = Command::new("rm")
+                                        //             .arg("-r")
+                                        //             .arg(metrics_repo_path.to_str().unwrap())
+                                        //             .output()
+                                        //             .expect("Failed to remove log files.");
+                                        // // Create a new rates folder
+                                        // let _ = Command::new("mkdir")
+                                        //             .arg(metrics_repo_path.to_str().unwrap())
+                                        //             .output()
+                                        //             .expect("Failed to create new rates folder.");
+                                        eprintln!("++++++remove files in the folder");
+                                        for entry in std::fs::read_dir(metrics_repo_path.to_str().unwrap())? {
+                                            let entry = entry?;
+                                            std::fs::remove_file(entry.path())?;
+                                        }
                                     }
                                     else
                                     { // No re-configuration was issued
                                         epochs_since_reconfiguration += 1;
+                                        eprintln!("++++++increase epoch {}", epochs_since_reconfiguration);
                                     }
                                     // Clear epoch information
                                     epoch_files.remove(epoch);
